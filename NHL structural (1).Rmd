@@ -1,0 +1,196 @@
+---
+title: "NHL Structural Model"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# NHL
+
+```{r}
+#loading required libraries
+library(tidyverse)
+library(RCurl)
+library(ggplot2)
+```
+
+```{r}
+#the data
+library(RCurl)
+link <- getURL("https://raw.githubusercontent.com/M-ttM/Basketball/master/gamedata.csv")
+nhl <- read.csv(text = link)
+head(nhl)
+```
+
+## WEIBULL  DISTRIBUTION
+
+```{r}
+install.packages("fitdistrplus")
+```
+
+
+```{r}
+library(fitdistrplus)
+```
+
+```{r}
+nhl <- nhl %>% mutate(GHadj = G.1+.5, GAadj = G+.5)
+```
+
+```{R}
+plotdist(nhl$G.1, histo = TRUE, demp = TRUE)
+```
+
+```{r}
+plotdist(nhl$G, histo = TRUE, demp = TRUE)
+```
+
+
+```{r}
+fit.GH <- fitdist(nhl$GHadj, "weibull")
+summary(fit.GH)
+```
+
+
+
+```{r}
+fit.GA <- fitdist(nhl$GAadj, "weibull")
+summary(fit.GA)
+```
+
+
+```{r}
+denscomp(fit.GH)
+```
+
+
+```{r}
+denscomp(fit.GA)
+```
+
+## WINS PER SEASON PER EXTRA GOAL PER GAME
+
+WP = GF^(a) / [GF^(a) + GA^(a)]
+
+slope = (a * GF^(a-1) * GA^(a)) / (GF^(a) + GA^(a))^(2)
+
+a = shape = 2.2
+
+```{r}
+count <- nhl %>%
+  group_by(Home) %>%
+  summarize(GF = sum(G.1), GA = sum(G))
+```
+
+```{r}
+a = 2.2
+count <- count %>% 
+  mutate(WP = (GF^(a)/(GF^(a) + GA^(a)))) %>% 
+  arrange(desc(WP))
+```
+
+```{r}
+count <- count %>% 
+  mutate(Slope = (a * GF^(a-1) * GA^(a)) / (GF^(a) + GA^(a))^(2))
+```
+
+```{r}
+count <- count %>% 
+  mutate(xWpS = Slope * 82)
+
+print(count)
+```
+
+
+## PER GAME PREDICTION
+
+```{r}
+a = 2.2
+nhl <- nhl %>% 
+  mutate(WP = (G.1^(a)/(G.1^(a) + G^(a))),
+         diff = G.1 - G,
+         Win = ifelse(diff>0, 1, 0)) %>% 
+  arrange(desc(WP))
+print(head(nhl))
+```
+
+
+```{r}
+nhl <- nhl %>% 
+  mutate(resd = Win - WP)
+```
+
+
+```{r}
+ggplot(nhl, aes(resd)) + 
+  geom_histogram()
+```
+
+From the plot above, we can understand the predictive ability of the Pythagorean Wins Model. It predicts around 150 estimates with the correct win probability, this means that through goals scored and conceded in the game, 150 times the model predicts the correct probability as the result of the game. If we divide the plot in half from the 0 point, we can see that it is asymmetric, with the positive residuals having a higher probability, this implies that it predicts a higher win probability than the actual result more times than it does a lower one. There are clear modes in the distribution - 0, -.2, .2, -.3, .3, and so on. It is to be noted that everything on the left of 1 had a positive probability but a value for 0 which implies either a tie or a loss. The probability associated with such a game is never predicted higher than 50%. For wins, it ranges above the 50% point (depending on goals scored and conceded).
+
+
+## LOGISTIC REGRESSION 
+
+A logistic regression with two variables - Goals For and Goals Against will be used to predict the winning probability of a team. It predicts the odds for a success, in this context, a win given the variables. Therefore, intuitively, considering similar level of teams, will have the same coefficient affecting the probability of winning a game as a goal being scored must have the same but opposite implication on the chances of a team winning. Otherwise, goals scored are valued higher than goals conceded. Therefore it will just use the difference in the two values to increase the odds in relation to the coefficient value as per its slope. In a pythagorean model, there is a scale and shape which help in understanding and modelling such situations better than logistic regression. 
+
+# NHL PREDICTION
+
+```{r}
+#the data
+library(RCurl)
+link <- getURL("https://raw.githubusercontent.com/M-ttM/Basketball/master/allrecords2.csv")
+nhl1 <- read.csv(text = link)
+head(nhl1)
+```
+
+## second half WP using first half pf/pa and Weibull distribution estimate.
+
+```{r}
+a = 2.2
+nhl1 <- nhl1 %>% 
+  mutate(WP = (GF_mid^(a)/(GF_mid^(a) + GA_mid^(a))),
+         W_pred = W_mid + (82-GP_mid)*WP) %>%
+  arrange(desc(WP))
+
+print(head(nhl1))
+```
+```{r}
+ggplot(nhl1, aes(WP)) + 
+  geom_histogram()
+```
+
+## second half WP for each team by running a regression using the first half wins/pf/pa data, and using the predicted values.
+
+```{r}
+fit.1 <- lm(W ~ GF_mid + GA_mid, data = nhl1)
+summary(fit.1)
+```
+
+## Which predictions does better at predicting the second half of the season? 
+
+```{r}
+nhl1 <- nhl1 %>% 
+  mutate(resd = W_pred - W)
+```
+
+```{r}
+nhl1$resd_l <- resid(fit.1)
+```
+
+```{r}
+ggplot(nhl1, aes(resd)) + 
+  geom_histogram()
+```
+
+
+```{r}
+ggplot(nhl1, aes(resd_l)) + 
+  geom_histogram()
+```
+The Pythagorean Win Model is better at prediction with higher values at 0 and more of the residuals centered around 0 and within the 5 win error range. FOr the regressions, the residuals are more disperesed and less percentage is in the -5 to 5 error range. It also has more outliers in the residuals distribution.
+
+
